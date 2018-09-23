@@ -23,8 +23,6 @@ with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 
-#define FILE_OUTPUT
-
 #include <fstream>
 #include <iostream>
 #include <algorithm>
@@ -34,19 +32,14 @@ with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <string>
 #include <cstdint>
 
-#include "dense_cubical_grids.h"
-#include "birthday_index.h"
-#include "columns_to_reduce.h"
-#include "simplex_coboundary_enumerator.h"
-#include "write_pairs.h"
-#include "union_find.h"
-#include "compute_pairs.h"
+#include "cubicalripser_2dim.h"
 
 using namespace std;
 
-enum calculation_method { LINKFIND, COMPUTEPAIRS};
+CubicalRipser2D::CubicalRipser2D(){}
+CubicalRipser2D::~CubicalRipser2D(){}
 
-void print_usage_and_exit(int exit_code) {
+void CubicalRipser2D::print_usage_and_exit(int exit_code) {
 	cerr << "Usage: "
 	     << "CR2 "
 	     << "[options] [input_filename]" << endl
@@ -68,138 +61,97 @@ void print_usage_and_exit(int exit_code) {
 	exit(exit_code);
 }
 
-
-int main(int argc, char** argv){
-	const char* filename = nullptr;
-	string output_filename = "answer_2dim.diagram"; //default name
-	file_format format = DIPHA;
-	calculation_method method = LINKFIND;
-	double threshold = 99999;
-	bool print = false;
-
-	for (int i = 1; i < argc; ++i) {
-		const string arg(argv[i]);
-		if (arg == "--help") {
-			print_usage_and_exit(0);
-		} else if (arg == "--threshold") {
-			string parameter = string(argv[++i]);
-			size_t next_pos;
-			threshold = stod(parameter, &next_pos);
-			if (next_pos != parameter.size()) print_usage_and_exit(-1);
-		} else if (arg == "--format") {
-			string parameter = string(argv[++i]);
-			if (parameter == "dipha") {
-				format = DIPHA;
-			} else if (parameter == "perseus") {
-				format = PERSEUS;
-			} else {
-				print_usage_and_exit(-1);
-			}
-		} else if(arg == "--method") {
-			string parameter = string(argv[++i]);
-			if (parameter == "link_find") {
-				method = LINKFIND;
-			} else if (parameter == "compute_pairs") {
-				method = COMPUTEPAIRS;
-			} else {
-				print_usage_and_exit(-1);
-			}
-		} else if (arg == "--output") {
-			output_filename = string(argv[++i]);
-		} else if(arg == "--print"){
-			print = true;
-		} else {
-			if (filename) { print_usage_and_exit(-1); }
-			filename = argv[i];
+void CubicalRipser2D::ComputeBarcode(const char* filename, string output_filename, string format, string method, double threshold, bool print){
+		ifstream file_stream(filename);
+		if (filename && file_stream.fail()) {
+			cerr << "couldn't open file " << filename << std::endl;
+			exit(-1);
 		}
-	}
 
-    ifstream file_stream(filename);
-	if (filename && file_stream.fail()) {
-		cerr << "couldn't open file " << filename << std::endl;
-		exit(-1);
-	}
-
-	vector<WritePairs> writepairs; // dim birth death
-	writepairs.clear();
-	
-	DenseCubicalGrids* dcg = new DenseCubicalGrids(filename, threshold, format);
-	ColumnsToReduce* ctr = new ColumnsToReduce(dcg);
-	
-	switch(method){
-		case LINKFIND:
-		{
-			JointPairs* jp = new JointPairs(dcg, ctr, writepairs, print);
-			jp->joint_pairs_main(); // dim0
-
-			ComputePairs* cp = new ComputePairs(dcg, ctr, writepairs, print);
-			cp->compute_pairs_main(); // dim1
-		
-		break;
+		vector<WritePairs> writepairs; // dim birth death
+		writepairs.clear();
+		file_format format_type = PERSEUS;
+		if (format == "DIPHA"){
+			format_type = DIPHA;
 		}
 		
-		case COMPUTEPAIRS:
-		{
-			ComputePairs* cp = new ComputePairs(dcg, ctr, writepairs, print);
-			cp->compute_pairs_main(); // dim0
-			cp->assemble_columns_to_reduce();
-
-			cp->compute_pairs_main(); // dim1
-	
-		break;
+		calculation_method calc_method = LINKFIND;
+		if (method == "COMPUTEPAIRS"){
+			calc_method = COMPUTEPAIRS;
 		}
-	}
+		
+		DenseCubicalGrids* dcg = new DenseCubicalGrids(filename, threshold, format_type);
+		ColumnsToReduce* ctr = new ColumnsToReduce(dcg);
+		
+		switch(calc_method){
+			case LINKFIND:
+			{
+				JointPairs* jp = new JointPairs(dcg, ctr, writepairs, print);
+				jp->joint_pairs_main(); // dim0
 
-	
-#ifdef FILE_OUTPUT
-	ofstream writing_file;
-
-	string extension = ".csv";
-	if(equal(extension.rbegin(), extension.rend(), output_filename.rbegin()) == true){
-		string outname = output_filename;
-		writing_file.open(outname, ios::out);
-
-		if(!writing_file.is_open()){
-			cout << " error: open file for output failed! " << endl;
-		}
-
-		int64_t p = writepairs.size();
-		for(int64_t i = 0; i < p; ++i){
-			writing_file << writepairs[i].getDimension() << ",";
-
-			writing_file << writepairs[i].getBirth() << ",";
-			writing_file << writepairs[i].getDeath() << endl;
-		}
-		writing_file.close();
-	} else {
-
-		writing_file.open(output_filename, ios::out | ios::binary);
-
-		if(!writing_file.is_open()){
-			cout << " error: open file for output failed! " << endl;
-		}
-
-		int64_t mn = 8067171840;
-		writing_file.write((char *) &mn, sizeof( int64_t )); // magic number
-		int64_t type = 2;
-		writing_file.write((char *) &type, sizeof( int64_t )); // type number of PERSISTENCE_DIAGRAM
-		int64_t p = writepairs.size();
-		cout << "the number of pairs : " << p << endl;
-		writing_file.write((char *) &p, sizeof( int64_t )); // number of points in the diagram p
-		for(int64_t i = 0; i < p; ++i){
-			int64_t writedim = writepairs[i].getDimension();
-			writing_file.write((char *) &writedim, sizeof( int64_t )); // dim
-
-			double writebirth = writepairs[i].getBirth();
-			writing_file.write((char *) &writebirth, sizeof( double )); // birth
+				ComputePairs* cp = new ComputePairs(dcg, ctr, writepairs, print);
+				cp->compute_pairs_main(); // dim1
 			
-			double writedeath = writepairs[i].getDeath();
-			writing_file.write((char *) &writedeath, sizeof( double )); // death
+			break;
+			}
+			
+			case COMPUTEPAIRS:
+			{
+				ComputePairs* cp = new ComputePairs(dcg, ctr, writepairs, print);
+				cp->compute_pairs_main(); // dim0
+				cp->assemble_columns_to_reduce();
+
+				cp->compute_pairs_main(); // dim1
+		
+			break;
+			}
 		}
-		writing_file.close();
-	}
-#endif
+		ofstream writing_file;
 
-	return 0;
+			string extension = ".csv";
+			if(equal(extension.rbegin(), extension.rend(), output_filename.rbegin()) == true){
+				string outname = output_filename;
+				writing_file.open(outname, ios::out);
 
+				if(!writing_file.is_open()){
+					cout << " error: open file for output failed! " << endl;
+				}
+
+				int64_t p = writepairs.size();
+				for(int64_t i = 0; i < p; ++i){
+					writing_file << writepairs[i].getDimension() << ",";
+
+					writing_file << writepairs[i].getBirth() << ",";
+					writing_file << writepairs[i].getDeath() << endl;
+				}
+				writing_file.close();
+			} else {
+
+				writing_file.open(output_filename, ios::out | ios::binary);
+
+				if(!writing_file.is_open()){
+					cout << " error: open file for output failed! " << endl;
+				}
+
+				int64_t mn = 8067171840;
+				writing_file.write((char *) &mn, sizeof( int64_t )); // magic number
+				int64_t type = 2;
+				writing_file.write((char *) &type, sizeof( int64_t )); // type number of PERSISTENCE_DIAGRAM
+				int64_t p = writepairs.size();
+				cout << "the number of pairs : " << p << endl;
+				writing_file.write((char *) &p, sizeof( int64_t )); // number of points in the diagram p
+				for(int64_t i = 0; i < p; ++i){
+					int64_t writedim = writepairs[i].getDimension();
+					writing_file.write((char *) &writedim, sizeof( int64_t )); // dim
+
+					double writebirth = writepairs[i].getBirth();
+					writing_file.write((char *) &writebirth, sizeof( double )); // birth
+					
+					double writedeath = writepairs[i].getDeath();
+					writing_file.write((char *) &writedeath, sizeof( double )); // death
+				}
+				writing_file.close();
+			}		
 }
+
+
